@@ -25,6 +25,7 @@ module Language.Haskell.Exts.Annotated (
     , module Language.Haskell.Exts.SrcLoc
     , module Language.Haskell.Exts.Comments
     , module Language.Haskell.Exts.Extension
+    , module Language.Haskell.Exts.Annotated.Parser
     -- * Parsing of Haskell source files
     , parseFile
     , parseFileWithMode
@@ -34,18 +35,14 @@ module Language.Haskell.Exts.Annotated (
     , parseFileContentsWithMode
     , parseFileContentsWithExts
     , parseFileContentsWithComments
-    -- * Parsing of Haskell source elements,
-    , parseModule, parseModuleWithMode, parseModuleWithComments
-    , parseExp, parseExpWithMode, parseExpWithComments
-    , parseStmt, parseStmtWithMode, parseStmtWithComments
-    , parsePat, parsePatWithMode, parsePatWithComments
-    , parseDecl, parseDeclWithMode, parseDeclWithComments
-    , parseType, parseTypeWithMode, parseTypeWithComments
-    -- * Read extensions declared in LANGUAGE pragmas
-    , readExtensions
+    -- * Parse results
+    , ParseResult(..)
+    -- * Parse modes
+    , ParseMode(..)
     ) where
 
 import Language.Haskell.Exts.Annotated.Build
+import Language.Haskell.Exts.Annotated.Parser
 import Language.Haskell.Exts.Annotated.Syntax
 import Language.Haskell.Exts.Parser ( Parseable(..), ParseResult(..), fromParseResult, ParseMode(..), defaultParseMode )
 import Language.Haskell.Exts.Lexer ( lexTokenStream, lexTokenStreamWithMode, Token(..) )
@@ -55,8 +52,6 @@ import Language.Haskell.Exts.Annotated.ExactPrint
 import Language.Haskell.Exts.SrcLoc
 import Language.Haskell.Exts.Extension
 import Language.Haskell.Exts.Comments
-
-import Language.Haskell.Exts.InternalParser
 
 import Data.List
 import Language.Preprocessor.Unlit
@@ -111,32 +106,6 @@ parseFileContentsWithComments p@(ParseMode fn oldLang exts ign _ _) rawStr =
                        (case mLang of {Nothing -> oldLang;Just newLang -> newLang}, es)
                   _ -> (oldLang, [])
          in parseModuleWithComments (p { baseLanguage = bLang, extensions = exts ++ extraExts }) md
-
--- | Gather the extensions declared in LANGUAGE pragmas
---   at the top of the file. Returns 'Nothing' if the
---   parse of the pragmas fails.
-readExtensions :: String -> Maybe (Maybe Language, [Extension])
-readExtensions str = case getTopPragmas str of
-        ParseOk pgms -> extractLang $ concatMap getExts pgms
-        _            -> Nothing
-  where getExts :: ModulePragma l -> [Either Language Extension]
-        getExts (LanguagePragma _ ns) = map readExt ns
-        getExts _ = []
-
-        readExt (Ident _ e) = 
-            case classifyLanguage e of
-              UnknownLanguage _ -> Right $ classifyExtension e
-              lang -> Left lang
-        readExt Symbol {} = error "readExt: Symbol"
-
-        extractLang = extractLang' Nothing []
-
-        extractLang' lacc eacc [] = Just (lacc, eacc)
-        extractLang' Nothing eacc (Left l : rest) = extractLang' (Just l) eacc rest
-        extractLang' (Just l1) eacc (Left l2:rest)
-            | l1 == l2  = extractLang' (Just l1) eacc rest
-            | otherwise = Nothing
-        extractLang' lacc eacc (Right ext : rest) = extractLang' lacc (ext:eacc) rest
 
 ppContents :: String -> String
 ppContents = unlines . f . lines

@@ -15,25 +15,17 @@
 > -----------------------------------------------------------------------------
 >
 > module Language.Haskell.Exts.InternalParser (
->               -- * General parsing
->               ParseMode(..), defaultParseMode, ParseResult(..), fromParseResult,
->               -- * Parsing of specific AST elements
->               -- ** Modules
->               parseModule, parseModuleWithMode, parseModuleWithComments,
->               -- ** Expressions
->               parseExp, parseExpWithMode, parseExpWithComments,
->               -- ** Statements
->               parseStmt, parseStmtWithMode, parseStmtWithComments,
->               -- ** Patterns
->               parsePat, parsePatWithMode, parsePatWithComments,
->               -- ** Declarations
->               parseDecl, parseDeclWithMode, parseDeclWithComments,
->               -- ** Types
->               parseType, parseTypeWithMode, parseTypeWithComments,
->               -- ** Multiple modules in one file
->               parseModules, parseModulesWithMode, parseModulesWithComments,
->               -- ** Option pragmas
->               getTopPragmas
+>               mparseModule,
+>               mparseExp,
+>               mparsePat,
+>               mparseDecl,
+>               mparseType,
+>               mparseStmt,
+>               ngparseModulePragmas,
+>               ngparseModuleHead,
+>               ngparseModuleHeadAndImports,
+>               ngparsePragmasAndModuleHead,
+>               ngparsePragmasAndModuleName,
 >               ) where
 >
 > import Language.Haskell.Exts.Annotated.Syntax hiding ( Type(..), Exp(..), Asst(..), XAttr(..), FieldUpdate(..) )
@@ -281,13 +273,17 @@ Pragmas
 > %lexer { lexer } { Loc _ EOF }
 > %error { parseError }
 > %name mparseModule page
+> %name mparseModules modules
 > %name mparseExp trueexp
 > %name mparsePat pat
 > %name mparseDecl topdecl
 > %name mparseType truectype
 > %name mparseStmt stmt
-> %name mparseModules modules
-> %partial mfindOptPragmas toppragmas
+> %partial ngparseModulePragmas toppragmas
+> %partial ngparseModuleHead modulehead
+> %partial ngparseModuleHeadAndImports moduletopimps
+> %partial ngparsePragmasAndModuleHead moduletophead
+> %partial ngparsePragmasAndModuleName moduletopname
 > %tokentype { Loc Token }
 > %expect 7
 > %%
@@ -353,6 +349,10 @@ Module Header
 > optmodulehead :: { Maybe (ModuleHead L) }
 >       : 'module' modid maybemodwarning maybeexports 'where'   { Just $ ModuleHead ($1 <^^> $5 <** [$1,$5]) $2 $3 $4 }
 >       | {- empty -}                                           { Nothing }
+
+Only needed for use as an external parser
+> modulehead :: { ModuleHead L }
+>       : 'module' modid maybemodwarning maybeexports 'where'   { ModuleHead ($1 <^^> $5 <** [$1,$5]) $2 $3 $4 }
 
 > maybemodwarning ::  { Maybe (WarningText L) }
 >       : '{-# DEPRECATED' STRING '#-}'         { let Loc l (StringTok (s,_)) = $2 in Just $ DeprText ($1 <^^> $3 <** [$1,l,$3]) s }
@@ -1830,6 +1830,23 @@ Miscellaneous (mostly renamings)
 > tyvarsym :: { Name L }
 > tyvarsym : VARSYM              { let Loc l (VarSym x) = $1 in Symbol (nIS l) x }
 
+> impdeclsblock :: { ([ImportDecl L],[S],L) }
+>               : '{'  optsemis impdecls optsemis '}'         { let (ids, ss) = $3 in (ids, $1 : reverse $2 ++ ss ++ reverse $4 ++ [$5], $1 <^^> $5) }
+>               | open optsemis impdecls optsemis close       { let (ids, ss) = $3 in (ids, $1 : reverse $2 ++ ss ++ reverse $4 ++ [$5], $1 <^^> $5) }
+
+Exported as partial parsers:
+
+> moduletopname :: { (([ModulePragma L], [S], L), Maybe (ModuleName L)) }
+>               : toppragmas 'module' modid     { ($1, Just $3) }
+>               | toppragmas {- empty -}        { ($1, Nothing) }
+
+> moduletophead :: { (([ModulePragma L], [S], L), Maybe (ModuleHead L)) }
+>               : toppragmas optmodulehead      { ($1, $2) }
+
+> moduletopimps :: { (([ModulePragma L], [S], L), Maybe (ModuleHead L), Maybe ([ImportDecl L],[S],L)) }
+>               : toppragmas optmodulehead impdeclsblock      { ($1, $2, Just $3) }
+>               | toppragmas optmodulehead {- empty -}        { ($1, $2, Nothing) }
+
 -----------------------------------------------------------------------------
 
 > {
@@ -1847,113 +1864,5 @@ Miscellaneous (mostly renamings)
 
 > nIS = noInfoSpan
 > iS = infoSpan
-
-
-> -- | Parse of a string, which should contain a complete Haskell module.
-> parseModule :: String -> ParseResult (Module SrcSpanInfo)
-> parseModule = simpleParse mparseModule
-
-> -- | Parse of a string containing a complete Haskell module, using an explicit mode.
-> parseModuleWithMode :: ParseMode -> String -> ParseResult (Module SrcSpanInfo)
-> parseModuleWithMode = modeParse mparseModule
-
-> -- | Parse of a string containing a complete Haskell module, using an explicit mode, retaining comments.
-> parseModuleWithComments :: ParseMode -> String -> ParseResult (Module SrcSpanInfo, [Comment])
-> parseModuleWithComments = commentParse mparseModule
-
-> -- | Parse of a string containing a Haskell expression.
-> parseExp :: String -> ParseResult (Exp SrcSpanInfo)
-> parseExp = simpleParse mparseExp
-
-> -- | Parse of a string containing a Haskell expression, using an explicit mode.
-> parseExpWithMode :: ParseMode -> String -> ParseResult (Exp SrcSpanInfo)
-> parseExpWithMode = modeParse mparseExp
-
-> -- | Parse of a string containing a complete Haskell module, using an explicit mode, retaining comments.
-> parseExpWithComments :: ParseMode -> String -> ParseResult (Exp SrcSpanInfo, [Comment])
-> parseExpWithComments = commentParse mparseExp
-
-> -- | Parse of a string containing a Haskell pattern.
-> parsePat :: String -> ParseResult (Pat SrcSpanInfo)
-> parsePat = simpleParse mparsePat
-
-> -- | Parse of a string containing a Haskell pattern, using an explicit mode.
-> parsePatWithMode :: ParseMode -> String -> ParseResult (Pat SrcSpanInfo)
-> parsePatWithMode = modeParse mparsePat
-
-> -- | Parse of a string containing a complete Haskell module, using an explicit mode, retaining comments.
-> parsePatWithComments :: ParseMode -> String -> ParseResult (Pat SrcSpanInfo, [Comment])
-> parsePatWithComments = commentParse mparsePat
-
-> -- | Parse of a string containing a Haskell top-level declaration.
-> parseDecl :: String -> ParseResult (Decl SrcSpanInfo)
-> parseDecl = simpleParse mparseDecl
-
-> -- | Parse of a string containing a Haskell top-level declaration, using an explicit mode.
-> parseDeclWithMode :: ParseMode -> String -> ParseResult (Decl SrcSpanInfo)
-> parseDeclWithMode = modeParse mparseDecl
-
-> -- | Parse of a string containing a complete Haskell module, using an explicit mode, retaining comments.
-> parseDeclWithComments :: ParseMode -> String -> ParseResult (Decl SrcSpanInfo, [Comment])
-> parseDeclWithComments = commentParse mparseDecl
-
-> -- | Parse of a string containing a Haskell type.
-> parseType :: String -> ParseResult (Type SrcSpanInfo)
-> parseType = runParser mparseType
-
-> -- | Parse of a string containing a Haskell type, using an explicit mode.
-> parseTypeWithMode :: ParseMode -> String -> ParseResult (Type SrcSpanInfo)
-> parseTypeWithMode mode = runParserWithMode mode mparseType
-
-> -- | Parse of a string containing a complete Haskell module, using an explicit mode, retaining comments.
-> parseTypeWithComments :: ParseMode -> String -> ParseResult (Type SrcSpanInfo, [Comment])
-> parseTypeWithComments mode str = runParserWithModeComments mode mparseType str
-
-> -- | Parse of a string containing a Haskell statement.
-> parseStmt :: String -> ParseResult (Stmt SrcSpanInfo)
-> parseStmt = simpleParse mparseStmt
-
-> -- | Parse of a string containing a Haskell type, using an explicit mode.
-> parseStmtWithMode :: ParseMode -> String -> ParseResult (Stmt SrcSpanInfo)
-> parseStmtWithMode = modeParse mparseStmt
-
-> -- | Parse of a string containing a complete Haskell module, using an explicit mode, retaining comments.
-> parseStmtWithComments :: ParseMode -> String -> ParseResult (Stmt SrcSpanInfo, [Comment])
-> parseStmtWithComments = commentParse mparseStmt
-
-
-> simpleParse :: AppFixity a => P (a L) -> String -> ParseResult (a L)
-> simpleParse p = applyFixities preludeFixities <=< runParser p
-
-> modeParse :: AppFixity a => P (a L) -> ParseMode -> String -> ParseResult (a L)
-> modeParse p mode = applyFixities' (fixities mode) <=< runParserWithMode mode p
-
-> commentParse :: AppFixity a => P (a L) -> ParseMode -> String -> ParseResult (a L, [Comment])
-> commentParse p mode str = do (ast, cs) <- runParserWithModeComments mode p str
->                              ast' <- applyFixities' (fixities mode) ast
->                              return (ast', cs)
-
-> -- | Partial parse of a string starting with a series of top-level option pragmas.
-> getTopPragmas :: String -> ParseResult [ModulePragma SrcSpanInfo]
-> getTopPragmas = runParser (mfindOptPragmas >>= \(ps,_,_) -> return ps)
-
-> -- | Parse of a string, which should contain a complete Haskell module.
-> parseModules :: String -> ParseResult [Module SrcSpanInfo]
-> parseModules = mapM (applyFixities preludeFixities) <=< runParser mparseModules
-
-> -- | Parse of a string containing a complete Haskell module, using an explicit mode.
-> parseModulesWithMode :: ParseMode -> String -> ParseResult [Module SrcSpanInfo]
-> parseModulesWithMode mode = mapM (applyFixities' (fixities mode)) <=< runParserWithMode mode mparseModules
-
-> -- | Parse of a string containing a complete Haskell module, using an explicit mode, retaining comments.
-> parseModulesWithComments :: ParseMode -> String -> ParseResult ([Module SrcSpanInfo], [Comment])
-> parseModulesWithComments mode str = do (ast,cs) <- runParserWithModeComments mode mparseModules str
->                                        ast' <- mapM (applyFixities' (fixities mode)) ast
->                                        return (ast', cs)
->
-> applyFixities' :: (AppFixity a) => Maybe [Fixity] -> a L -> ParseResult (a L)
-> applyFixities' Nothing ast = return ast
-> applyFixities' (Just fixs) ast = applyFixities fixs ast
->
 
 > }
