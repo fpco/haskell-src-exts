@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, DeriveDataTypeable, FlexibleInstances, DeriveFunctor #-}
+{-# LANGUAGE DeriveDataTypeable, FlexibleInstances, DeriveFunctor #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 -----------------------------------------------------------------------------
 -- |
@@ -36,9 +36,10 @@ module Language.Haskell.Exts.Annotated.Parser
     , ListOf(..), unListOf
     -- ** Option pragmas
     , getTopPragmas
+    , PragmasAndModuleName(..), PragmasAndModuleHead(..), ModuleHeadAndImports(..)
     ) where
 
-import Data.Data hiding (Fixity)
+import Data.Data (Data, Typeable)
 import Language.Haskell.Exts.Annotated.Fixity
 import Language.Haskell.Exts.Annotated.Syntax
 import Language.Haskell.Exts.Comments
@@ -156,11 +157,7 @@ nglistParserNoFixity f = fmap (NonGreedy . toListOf) . normalParserNoFixity f
 --
 --   (this example uses the simplified AST)
 newtype NonGreedy a = NonGreedy { unNonGreedy :: a }
-#ifdef __GLASGOW_HASKELL__
   deriving (Eq,Ord,Show,Typeable,Data)
-#else
-  deriving (Eq,Ord,Show)
-#endif
 
 instance Functor NonGreedy where
     fmap f (NonGreedy x) = NonGreedy (f x)
@@ -170,11 +167,7 @@ instance Functor NonGreedy where
 --   provided when the type is used as a list in the syntax, and the same
 --   delimiters are used in all of its usages. Some exceptions are made:
 data ListOf a = ListOf SrcSpanInfo [a]
-#ifdef __GLASGOW_HASKELL__
   deriving (Eq,Ord,Show,Typeable,Data,Functor)
-#else
-  deriving (Eq,Ord,Show)
-#endif
 
 unListOf :: ListOf a -> [a]
 unListOf (ListOf _ xs) = xs
@@ -186,3 +179,63 @@ unListOf (ListOf _ xs) = xs
 -- types, but this works.
 toListOf :: ([a], [SrcSpan], SrcSpanInfo) -> ListOf a
 toListOf (xs, ss, l) = ListOf (infoSpan (srcInfoSpan l) ss) xs
+
+-- | Type intended to be used with 'Parseable', with instances that implement a
+--   non-greedy parse of the module name, including top-level pragmas.  This
+--   means that a parse error that comes after the module header won't be
+--   returned. If the 'Maybe' value is 'Nothing', then this means that there was
+--   no module header.
+data PragmasAndModuleName l = PragmasAndModuleName
+    ([ModulePragma l], l)
+    (Maybe (ModuleName l))
+  deriving (Eq,Ord,Show,Typeable,Data)
+
+instance Parseable (NonGreedy (PragmasAndModuleName SrcSpanInfo)) where
+    parser _ = do
+        (ps, mn) <- ngparsePragmasAndModuleName
+        return $ NonGreedy $ PragmasAndModuleName (handleSpans ps) mn
+
+--   Type intended to be used with 'Parseable', with instances that implement a
+--   non-greedy parse of the module name, including top-level pragmas.  This
+--   means that a parse error that comes after the module header won't be
+--   returned. If the 'Maybe' value is 'Nothing', this means that there was no
+--   module head.
+--
+--   Note that the 'ParseMode' particularly matters for this due to the
+--   'MagicHash' changing the lexing of identifiers to include \"#\".
+data PragmasAndModuleHead l = PragmasAndModuleHead
+    ([ModulePragma l], l)
+    (Maybe (ModuleHead l))
+  deriving (Eq,Ord,Show,Typeable,Data)
+
+instance Parseable (NonGreedy (PragmasAndModuleHead SrcSpanInfo)) where
+    parser _ = do
+        (ps, mn) <- ngparsePragmasAndModuleHead
+        return $ NonGreedy $ PragmasAndModuleHead (handleSpans ps) mn
+
+--   Type intended to be used with 'Parseable', with instances that implement a
+--   non-greedy parse of the module head, including top-level pragmas, module
+--   name, export list, and import list. This means that if a parse error that
+--   comes after the imports won't be returned.  If the 'Maybe' value is
+--   'Nothing', this means that there was no module head.
+--
+--   Note that the 'ParseMode' particularly matters for this due to the
+--   'MagicHash' changing the lexing of identifiers to include \"#\".
+data ModuleHeadAndImports l = ModuleHeadAndImports
+    ([ModulePragma l], l)
+    (Maybe (ModuleHead l))
+    (Maybe ([ImportDecl l], l))
+  deriving (Eq,Ord,Show,Typeable,Data)
+
+instance Parseable (NonGreedy (ModuleHeadAndImports SrcSpanInfo)) where
+    parser _ = do
+        (ps, mh, mimps) <- ngparseModuleHeadAndImports
+        return $ NonGreedy $ ModuleHeadAndImports
+            (handleSpans ps)
+            mh
+            (fmap handleSpans mimps)
+
+handleSpans :: ([a], [SrcSpan], SrcSpanInfo) -> ([a], SrcSpanInfo)
+handleSpans x = (xs, l)
+  where
+    ListOf l xs = toListOf x

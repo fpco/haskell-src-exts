@@ -22,6 +22,10 @@
 >               mparseType,
 >               mparseStmt,
 >               ngparseModulePragmas,
+>               ngparseModuleHead,
+>               ngparseModuleHeadAndImports,
+>               ngparsePragmasAndModuleHead,
+>               ngparsePragmasAndModuleName
 >               ) where
 >
 > import Language.Haskell.Exts.Annotated.Syntax hiding ( Type(..), Exp(..), Asst(..), XAttr(..), FieldUpdate(..) )
@@ -281,6 +285,10 @@ Pragmas
 > %name mparseType truectype
 > %name mparseStmt stmt
 > %partial ngparseModulePragmas toppragmas
+> %partial ngparseModuleHead modulehead
+> %partial ngparseModuleHeadAndImports moduletopimps
+> %partial ngparsePragmasAndModuleHead moduletophead
+> %partial ngparsePragmasAndModuleName moduletopname
 > %tokentype { Loc Token }
 > %expect 7
 > %%
@@ -346,6 +354,10 @@ Module Header
 > optmodulehead :: { Maybe (ModuleHead L) }
 >       : 'module' modid maybemodwarning maybeexports 'where'   { Just $ ModuleHead ($1 <^^> $5 <** [$1,$5]) $2 $3 $4 }
 >       | {- empty -}                                           { Nothing }
+
+Only needed for use as an external parser
+> modulehead :: { ModuleHead L }
+>       : 'module' modid maybemodwarning maybeexports 'where'   { ModuleHead ($1 <^^> $5 <** [$1,$5]) $2 $3 $4 }
 
 > maybemodwarning ::  { Maybe (WarningText L) }
 >       : '{-# DEPRECATED' STRING '#-}'         { let Loc l (StringTok (s,_)) = $2 in Just $ DeprText ($1 <^^> $3 <** [$1,l,$3]) s }
@@ -1894,6 +1906,23 @@ Miscellaneous (mostly renamings)
 
 > tyvarsym :: { Name L }
 > tyvarsym : VARSYM              { let Loc l (VarSym x) = $1 in Symbol (nIS l) x }
+
+> impdeclsblock :: { ([ImportDecl L],[S],L) }
+>               : '{'  optsemis impdecls optsemis '}'         { let (ids, ss) = $3 in (ids, $1 : reverse $2 ++ ss ++ reverse $4 ++ [$5], $1 <^^> $5) }
+>               | open optsemis impdecls optsemis close       { let (ids, ss) = $3 in (ids, $1 : reverse $2 ++ ss ++ reverse $4 ++ [$5], $1 <^^> $5) }
+
+Exported as partial parsers:
+
+> moduletopname :: { (([ModulePragma L], [S], L), Maybe (ModuleName L)) }
+>               : toppragmas 'module' modid     { ($1, Just $3) }
+>               | toppragmas {- empty -}        { ($1, Nothing) }
+
+> moduletophead :: { (([ModulePragma L], [S], L), Maybe (ModuleHead L)) }
+>               : toppragmas optmodulehead      { ($1, $2) }
+
+> moduletopimps :: { (([ModulePragma L], [S], L), Maybe (ModuleHead L), Maybe ([ImportDecl L],[S],L)) }
+>               : toppragmas optmodulehead impdeclsblock      { ($1, $2, Just $3) }
+>               | toppragmas optmodulehead {- empty -}        { ($1, $2, Nothing) }
 
 -----------------------------------------------------------------------------
 
